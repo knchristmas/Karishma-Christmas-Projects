@@ -1,4 +1,4 @@
-### This GitHub Repo is to display the Academic Accomplishments on Karishma Nandi Christmas at the University of Central Florida (UCF), at which I attended from 2021 to 2024.
+### This GitHub Repo is to display the academic accomplishments of Karishma Nandi Christmas at the University of Central Florida (UCF), of which I attended from Fall 2021 to Fall 2024.
 #### To Note: Some of the document contains only "Nandi Christmas," in which I refer to my middle name.
 
 ##### STA 4241- Statistical Learning with Dr. Aaron Paul in the Fall of 2024 

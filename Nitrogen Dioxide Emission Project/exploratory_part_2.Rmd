@@ -1,0 +1,346 @@
+---
+title: "Exploratory Part 2"
+output: html_document
+date: "2024-12-04"
+---
+
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(mapgl)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+
+data <- read_csv("C:\\Users\\knc5576\\Downloads\\daily_42602_2020.csv")
+data <- data %>%
+  clean_names()
+colnames(data)
+```
+
+```{r}
+data %>%
+  mutate(Date = as.Date(date_local)) %>%
+  group_by(Date) %>%
+  summarise(avg_NO2 = mean(arithmetic_mean, na.rm = TRUE)) %>%
+  ggplot(aes(x = Date, y = avg_NO2)) +
+  geom_line() +
+  labs(title = "Temporal Trends in NO2 Levels", x = "Date", y = "Average NO2 conc.")
+
+
+#aggregate data for regional analysis
+regional_data <- data %>%
+  group_by(state_name, county_name) %>%
+  summarise(avg_NO2 = mean(arithmetic_mean, na.rm = TRUE))
+
+```
+```{r}
+
+##ggplot of Latitude and Longtiude for Regional NO2 Levels
+ggplot(data, aes(x = longitude, y = latitude, color = arithmetic_mean)) +
+  geom_point() +
+  scale_color_viridis_c() +
+  labs(title = "Regional NO2 Levels", x = "Longitude", y = "Latitude", color = "NO2 Levels")
+
+
+
+```
+```{r}
+
+# aggregate data for longitude + latitude with token
+sf_data <- data %>%
+  filter(!is.na(latitude) & !is.na(longitude)) %>%
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326)
+
+## Scatterplot of USA with AQI
+mapdeck(token = "pk.eyJ1Ijoia25jNTU3NiIsImEiOiJjbTQ5MWFkYmQwNTk5MnJvcDZyMmhsMHQ0In0.YOoRyk4C5KODSw7RVW-aMg", style = mapdeck_style("streets")) %>%
+  add_scatterplot(
+    data = sf_data,
+    lon = "longitude",
+    lat = "latitude",
+    fill_colour = "aqi", 
+    radius = 5,
+    legend = TRUE
+  )
+```
+
+```{r}
+
+## Which state has the highest Arithmetic Mean (NO2 concentration)
+
+state_avg_aqi <- data %>%
+  janitor::clean_names() %>%
+  group_by(state_name) %>%
+  summarise(mean_aqi = mean(aqi, na.rm = TRUE)) %>%
+  arrange(desc(mean_aqi)) 
+highest_aqi_state <- state_avg_aqi %>% slice(1)
+print(highest_aqi_state)
+### Nevada has the highest mean of AQI at 28.8
+
+#Which state has highest AQI?
+state_max_aqi <- data %>%
+  group_by(state_name) %>%
+  summarise(max_aqi = max(aqi, na.rm = TRUE))
+highest_aqi_state <- state_max_aqi %>%
+  arrange(desc(max_aqi)) %>%
+  slice(1)
+print(highest_aqi_state)
+## California with 101 AQI max value (very bad)
+```
+
+```{r}
+
+# aggregate dataset for california 3d 
+california_data <- data %>%
+  filter(state_name == "California") %>%
+  group_by(county_name) %>%
+  summarise(
+    mean_aqi = mean(aqi, na.rm = TRUE),
+    latitude = mean(latitude, na.rm = TRUE),
+    longitude = mean(longitude, na.rm = TRUE)
+  )
+
+
+#Printing the center of California
+map <- mapboxgl(
+  zoom = 6,  
+  center = c(-119.4179, 36.7783),  
+  pitch = 70, 
+  bearing = 0  
+) |>
+  set_config_property(
+    "basemap",
+    "lightPreset",
+    "night" 
+)
+
+print(map)
+##add a layer of markers for aqi in every county - how?
+
+```
+
+```{r}
+
+p_load(geodata, giscoR, mapboxapi, mapgl, sf, terra, tidyverse,sf, dplyr)
+
+# aggregate data for california long + lat
+california_sf <- data %>%
+  filter(state_name == "California") %>%
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326)  
+
+#DEM demonstration
+plot(st_geometry(california_sf), main = "California County Locations")
+california_dem <- elevation_30s(country = "USA", path = tempdir())
+print(california_dem)
+plot(california_dem, main = "Digital Elevation Model (DEM) for USA")
+
+# Seeing DEM for ONLY cali.
+california_extent <- st_bbox(california_sf)
+california_dem_cropped <- crop(california_dem, extent(california_extent))
+plot(california_dem_cropped, main = "Cropped DEM for California Data Extent")
+
+# Plotting for AQI
+california_aqi_sf <- data %>%
+  filter(state_name == "California") %>%  # Filter for California
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326)
+california_aqi_sf <- california_aqi_sf %>%
+  mutate(color = case_when(
+    aqi <= 10 ~ "green", 
+    aqi <= 20 ~ "yellow",  
+    aqi <= 30 ~ "orange", 
+    aqi <= 40 ~ "red",
+    aqi <= 50 ~ "blue", 
+    aqi <= 60 ~ "purple",
+    aqi <= 70 ~ "pink",
+  ))
+plot(california_dem_cropped, main = "California DEM with AQI Markers")
+
+plot(
+  st_geometry(california_aqi_sf),
+  add = TRUE,
+  col = california_aqi_sf$color,  
+  pch = 20,  
+  cex = 1.0 
+)
+
+```
+
+```{r}
+
+## Heat intensity map
+california_aqi_sf <- data %>%
+  filter(state_name == "California") %>%  
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) 
+
+map <- mapboxgl(
+  style = mapbox_style("dark"), 
+  center = c(-119.4179, 36.7783), 
+  zoom = 6 
+)
+
+# Add the heatmap layer
+map <- map |>
+  add_heatmap_layer(
+    id = "california_heatmap",
+    source = california_aqi_sf,  #
+     )
+print(map)
+
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+# Nevada and Fireworks on Certain Holidays (range)
+nevada_fireworks <- data %>%
+  janitor::clean_names() %>%
+  filter(state_name == "Nevada") %>%
+  mutate(is_fireworks_holiday = date_local %in% c("2020-01-01", "2020-01-02", "2020-07-03", "2020-07-04", "2020-07-05")) %>%
+  filter(is_fireworks_holiday == TRUE)
+# Aggregating data by month + day of the week
+agg_nevada <- nevada_fireworks %>%
+  mutate(month = month(date_local, label = TRUE),
+         day = wday(date_local, label = TRUE)) %>%
+  group_by(month, day) %>%
+  summarise(mean_aqi = mean(aqi, na.rm = TRUE),
+            .groups = "drop")
+# Ggplot of the week of Firework Holidays in Nevada
+ggplot(agg_nevada, aes(x = day, y = month, fill = mean_aqi)) +
+  geom_tile(color = "white") +
+  labs(title = "Mean AQI on Fireworks Holidays in Nevada",
+       x = "Day of the Week",
+       y = "Month",
+       fill = "Mean AQI") +
+  scale_fill_gradient(low = "blue", high = "red") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+
+# Nevada data
+nevada_data <- data %>%
+  janitor::clean_names() %>%
+  filter(state_name == "Nevada")
+aqi_threshold <- 50 
+ggplot(nevada_data, aes(x = aqi)) +
+  geom_histogram(binwidth = 10, fill = "blue", alpha = 0.7, color = "black") +
+  geom_vline(xintercept = aqi_threshold, color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Histogram of AQI in Nevada",
+       x = "AQI",
+       y = "Frequency") +
+  theme_minimal()
+```
+
+```{r}
+
+# Seeing monthly data for Nevada to conclude if July and January are the problem
+nevada_monthly <- nevada_data %>%
+  mutate(month = lubridate::month(date_local, label = TRUE)) %>%
+  group_by(month) %>%
+  summarise(mean_aqi = mean(aqi, na.rm = TRUE), .groups = "drop")
+ggplot(nevada_monthly, aes(x = month, y = mean_aqi)) +
+  geom_line(group = 1, color = "blue", size = 1) +
+  geom_point(color = "blue", size = 2) +
+  geom_hline(yintercept = aqi_threshold, color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Mean Monthly AQI in Nevada with Threshold",
+       x = "Month",
+       y = "Mean AQI") +
+  theme_minimal()
+```
+
+```{r}
+
+# AQI Over Time in Nevada
+ggplot(nevada_data, aes(x = date_local, y = aqi)) +
+  geom_area(fill = "blue", alpha = 0.7) +
+  geom_hline(yintercept = aqi_threshold, color = "red", linetype = "dashed", size = 1) +
+  labs(title = "AQI Over Time in Nevada",
+       x = "Date",
+       y = "AQI") +
+  theme_minimal()
+```
+
+```{r}
+
+# California and Fireworks on Certain Holidays (range)
+california_fireworks <- data %>%
+  janitor::clean_names() %>%
+  filter(state_name == "California") %>%
+  mutate(is_fireworks_holiday = date_local %in% c("2020-01-01", "2020-01-02", "2020-07-03", "2020-07-04", "2020-07-05")) %>%
+  filter(is_fireworks_holiday == TRUE)
+# Aggregating data by month + day of the week
+agg_california <- california_fireworks %>%
+  mutate(month = month(date_local, label = TRUE),
+         day = wday(date_local, label = TRUE)) %>%
+  group_by(month, day) %>%
+  summarise(mean_aqi = mean(aqi, na.rm = TRUE),
+            .groups = "drop")
+# Ggplot of the week of Firework Holidays in Cali
+ggplot(agg_california, aes(x = day, y = month, fill = mean_aqi)) +
+  geom_tile(color = "white") +
+  labs(title = "Mean AQI on Fireworks Holidays in Cali",
+       x = "Day of the Week",
+       y = "Month",
+       fill = "Mean AQI") +
+  scale_fill_gradient(low = "blue", high = "red") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{r}
+
+# Cali data
+california_data <- data %>%
+  janitor::clean_names() %>%
+  filter(state_name == "California")
+aqi_threshold <- 50 
+ggplot(california_data, aes(x = aqi)) +
+  geom_histogram(binwidth = 10, fill = "blue", alpha = 0.7, color = "black") +
+  geom_vline(xintercept = aqi_threshold, color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Histogram of AQI in California",
+       x = "AQI",
+       y = "Frequency") +
+  theme_minimal()
+
+```
+
+```{r}
+
+# Seeing monthly data for California to conclude if July and January are the problem
+california_monthly <- california_data %>%
+  mutate(month = lubridate::month(date_local, label = TRUE)) %>%
+  group_by(month) %>%
+  summarise(mean_aqi = mean(aqi, na.rm = TRUE), .groups = "drop")
+ggplot(nevada_monthly, aes(x = month, y = mean_aqi)) +
+  geom_line(group = 1, color = "blue", size = 1) +
+  geom_point(color = "blue", size = 2) +
+  geom_hline(yintercept = aqi_threshold, color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Mean Monthly AQI in California with Threshold",
+       x = "Month",
+       y = "Mean AQI") +
+  theme_minimal()
+```
+
+```{r}
+
+# AQI Over Time in Cali
+ggplot(california_data, aes(x = date_local, y = aqi)) +
+  geom_area(fill = "blue", alpha = 0.7) +
+  geom_hline(yintercept = aqi_threshold, color = "red", linetype = "dashed", size = 1) +
+  labs(title = "AQI Over Time in Cali",
+       x = "Date",
+       y = "AQI") +
+  theme_minimal()
+```
+
+
+
+
+

@@ -1,0 +1,309 @@
+---
+title: "Exploratory Data Part 3"
+output: html_document
+date: "2024-12-13"
+---
+
+### These are just some Kyle Walker regional functions that I found on his LinkedIn. I focused on using California as a basis to show the regional AQI. There isn't a whole lot of data to work with but it does shower the poorer and better air quality areas.
+
+```{r}
+library(tigris)
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(ggiraph)
+library(readr)
+library(tidyverse)
+library(mapview)
+library(tigris)
+library(leaflet)
+library(readr)
+library(janitor)
+
+```
+
+
+```{r}
+
+# Loading my data
+data <- read_csv("C:\\Users\\knc5576\\Downloads\\daily_42602_2020.csv") %>%
+  janitor::clean_names()
+
+```
+
+## Starting Out
+#### I wanted to start with Kyle Walker's girafe and tigris functions from a LinkedIn post to display the entire regional map of the US with AQI Data. Below, I use the gg plot tool to combine the aggregating to display the regional map.
+```{r}
+
+#### Kyle Walker using functions girafe and tigris to show regional map
+# Aggregate state aqi data
+state_avg_aqi <- data %>%
+  group_by(state_name) %>%
+  summarise(mean_aqi = mean(aqi, na.rm = TRUE)) %>%
+  ungroup()
+state_shapes <- tigris::states(cb = TRUE, year = 2020) %>%
+  tigris::shift_geometry() %>%
+  st_as_sf()
+state_shapes <- state_shapes %>%
+  left_join(state_avg_aqi, by = c("NAME" = "state_name"))
+
+```
+
+```{r}
+
+
+# Regional map
+gg <- ggplot() +
+  geom_sf_interactive(data = state_shapes, 
+                      aes(geometry = geometry, 
+                          fill = mean_aqi, 
+                          tooltip = paste(NAME, "Mean AQI:", round(mean_aqi, 2))),
+                      color = "white") +
+  scale_fill_gradient(low = "green", high = "red", na.value = "gray",
+                      name = "Mean AQI") +
+  labs(title = "Mean AQI by State ", 
+       subtitle = "Regional Map of AQI") +
+  theme_minimal()
+girafe(ggobj = gg, options = list(opts_hover(css = "fill-opacity:0.5;")))
+
+
+
+
+```
+#### It looks like for the most part that near California is worse air quality
+
+
+### For this next graph, I wanted to see the AQI data by county in the US. I used the tigris function to get the county boundaries and then aggregated the AQI data by county. I then merged the two datasets and plotted the map using ggplot. I'm not quite sure why it looks super far away on the display, but it does show hovered county AQI.
+```{r}
+
+counties_shape <- counties(cb = TRUE, year = 2020) %>%
+  st_as_sf()
+
+# state name + county name
+counties_shape <- counties_shape %>%
+  left_join(
+    tigris::fips_codes %>%
+      select(state_code, state_name) %>%
+      distinct(),
+    by = c("STATEFP" = "state_code")
+  )
+
+# aggregating my aqi + county data
+aqi_data <- data %>%
+  group_by(state_name, county_name) %>%
+  summarise(mean_aqi = mean(aqi, na.rm = TRUE)) %>%
+  ungroup()
+counties_aqi <- counties_shape %>%
+  left_join(aqi_data, by = c("state_name", "NAME" = "county_name"))
+
+# Plot the Map
+gg <- ggplot() +
+  geom_sf_interactive(
+    data = counties_aqi,
+    aes(fill = mean_aqi, 
+        tooltip = paste(NAME, ", ", state_name, ": AQI ", round(mean_aqi, 1))),
+    color = "white", size = 0.8
+  ) +
+  scale_fill_gradient(low = "green", high = "red", na.value = "gray90", name = "Mean AQI") +
+  labs(
+    title = "US aqi by county",
+    subtitle = "Air quality index (AQI). Green = Good air quality, Red = Worse air quality"
+  ) +
+  coord_sf(expand = FALSE) +
+  theme_minimal()
+
+
+# Render the interactive map
+ggiraph::girafe(ggobj = gg)
+
+```
+
+#### For more clarity I decided to use the leaflet function to display the AQI data by county in the US. I used the leaflet function to create an interactive map and added the county boundaries and AQI data. I also added a legend to show the color scale for the AQI data. 
+```{r}
+
+
+# getting mean aqi by county + state
+county_avg_aqi <- data %>%
+  group_by(state_name, county_name) %>%
+  summarise(mean_aqi = mean(aqi, na.rm = TRUE), .groups = "drop")
+
+# Using tigris to help get the county shapes
+county_shapes <- tigris::counties(cb = TRUE, year = 2020) %>%
+  st_transform(crs = 4326)
+county_shapes <- county_shapes %>%
+  left_join(county_avg_aqi, by = c("NAME" = "county_name", "STATE_NAME" = "state_name"))
+
+
+leaflet(data = county_shapes) %>%
+  addTiles() %>%
+  addPolygons(
+    fillColor = ~colorNumeric(palette = "YlOrRd", domain = county_shapes$mean_aqi)(mean_aqi),
+    color = "black", weight = 0.2, fillOpacity = 0.7,
+    popup = ~paste(
+      "<strong>County:</strong>", NAME,
+      "<br><strong>State:</strong>", STATE_NAME,
+      "<br><strong>Mean AQI:</strong>", round(mean_aqi, 1)
+    )
+  ) %>%
+  addLegend(
+    pal = colorNumeric(palette = "YlOrRd", domain = county_shapes$mean_aqi),
+    values = county_shapes$mean_aqi,
+    title = "Mean AQI",
+    position = "bottomright"
+  )
+
+
+```
+
+
+
+#### For this portion, I used the tmap_leaflet function to create an interactive map and added the county boundaries and AQI data. I wanted to basically use all of the functions I could find that Kyle Walker shows on his LinkedIn.
+```{r}
+
+
+##Looking at data specifically in California 
+# Aggregate data in california and it's counties
+counties_shape <- counties(state = "CA", cb = TRUE, year = 2020) %>%
+  st_as_sf()
+# clean the AQI data and renaming every county for ease of access
+county_avg_aqi <- data %>%
+  filter(state_name == "California") %>%
+  group_by(county_name) %>%
+  summarise(mean_aqi = mean(aqi, na.rm = TRUE), .groups = "drop") %>%
+  rename(NAME = county_name) 
+# placing cali counties with the aqi data
+california_counties <- counties_shape %>%
+  left_join(county_avg_aqi, by = "NAME")
+# plotting county borders with AQI
+gg <- ggplot() +
+  geom_sf_interactive(data = california_counties,
+                      aes(geometry = geometry, fill = mean_aqi, 
+                          tooltip = paste(NAME, "Mean AQI:", round(mean_aqi, 1))),
+                      color = "black") +  
+  scale_fill_gradient(low = "green", high = "red", na.value = "gray",
+                      name = "Mean AQI") +
+  labs(title = "Mean AQI by County in California",
+       subtitle = "Sorted by County") +
+  theme_minimal()
+girafe(ggobj = gg, options = list(opts_hover(css = "fill-opacity:0.8;")))
+
+
+
+
+```
+
+#### Texas had the 2nd most AQI data so I decided to use the state to see the county data for AQI. I used the tigris function to get the county boundaries and then aggregated the AQI data by county. I then merged the two datasets and plotted the map using ggplot. 
+
+```{r}
+
+
+# loading texas counties + boundaries and aqi
+counties_shape <- counties(state = "TX", cb = TRUE, year = 2020) %>%
+  st_as_sf()
+county_avg_aqi <- data %>%
+  filter(state_name == "Texas") %>%
+  group_by(county_name) %>%
+  summarise(mean_aqi = mean(aqi, na.rm = TRUE), .groups = "drop") %>%
+  rename(NAME = county_name)
+texas_counties <- counties_shape %>%
+  left_join(county_avg_aqi, by = "NAME")
+
+
+# Make the map zoom out and down and keep the black lines
+gg <- ggplot() +
+  geom_sf_interactive(
+    data = texas_counties,
+    aes(fill = mean_aqi, 
+        tooltip = paste(NAME, "Mean AQI:", round(mean_aqi, 1))),
+    color = "black", size = 0.1
+  ) +
+  scale_fill_gradient(
+    low = "green", high = "red", na.value = "gray",
+    name = "Mean AQI"
+  ) +
+  labs(
+    title = "Mean AQI by County in Texas",
+    subtitle = "County-Level Air Quality Index Visualization"
+  ) +
+  theme_minimal() +
+  coord_sf(
+    xlim = c(-106, -94), ylim = c(25, 37),
+    expand = FALSE
+  )
+
+# Render the interactive map
+girafe(
+  ggobj = gg,
+  options = list(opts_hover(css = "fill-opacity:0.8;"))
+)
+
+```
+
+
+#### Next, I used the tm function to display the cali counties to show different AQI data. I used the tm_fill function to fill the counties with the AQI data and the tm_borders function to add the county borders. 
+```{r}
+library(tmap)
+tm <- tm_shape(california_counties) +
+  tm_fill(
+    col = "mean_aqi", 
+    palette = "-RdYlGn",
+    title = "Mean AQI"
+  ) +
+  tm_borders(col = "black", lwd = 0.5) +
+  tm_layout(
+    title = "Mean AQI by County in California (2020)",
+    title.position = c("center", "top"),
+    legend.position = c("left", "bottom")
+  )
+
+tmap_leaflet(tm)
+
+
+```
+
+
+
+#### Here is the leaflet version to display the same Cali counties, but different overlay which I thought was cooler.
+```{r}
+
+
+library(leaflet)
+
+leaflet(california_counties) %>%
+  addTiles() %>%
+  addPolygons(
+    fillColor = ~colorNumeric("RdYlGn", mean_aqi)(mean_aqi),
+    color = "black", weight = 1, fillOpacity = 0.7,
+    popup = ~paste("County: ", NAME, "<br>Mean AQI: ", round(mean_aqi, 1))
+  ) %>%
+  addLegend(
+    pal = colorNumeric("RdYlGn", california_counties$mean_aqi),
+    values = california_counties$mean_aqi,
+    title = "Mean AQI",
+    position = "bottomright"
+  )
+
+
+```
+
+
+
+#### Then, I found that he used this cool viridis scale fill of colors for certain data. I wanted to try it out with the California counties. 
+
+```{r}
+library(ggplot2)
+
+ggplot(data = california_counties) +
+  geom_sf(aes(fill = mean_aqi), color = "black", size = 0.1) +
+  scale_fill_viridis_c(option = "C") +
+  labs(
+    title = "Mean AQI by County in California (2020)",
+    fill = "Mean AQI"
+  ) +
+  theme_minimal()
+library(mapview)
+
+mapview(california_counties, zcol = "mean_aqi", legend = TRUE)
+
+
+```
